@@ -19,28 +19,37 @@ func saveInCache(p *playerInfo, redisClient *redis.Client) error {
 
 func getPlayerFromRedis(redisClient *redis.Client, key string) (*playerInfo, error) {
 	playerMap, err := redisClient.HGetAll(key).Result()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get from map")
+	}
 	p := &playerInfo{
 		ID:    playerMap["id"],
 		Name:  playerMap["name"],
 		State: playerMap["state"],
+		Won:   0,
+		Lost:  0,
+		Draw:  0,
 	}
-	won, err := strconv.Atoi(playerMap["won"])
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to convert won to int")
+	if playerMap["won"] != "" {
+		p.Won, err = strconv.Atoi(playerMap["won"])
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to convert won to int")
+		}
 	}
-	p.Won = won
 
-	draw, err := strconv.Atoi(playerMap["draw"])
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to convert draw to int")
+	if playerMap["draw"] != "" {
+		p.Draw, err = strconv.Atoi(playerMap["draw"])
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to convert draw to int")
+		}
 	}
-	p.Draw = draw
 
-	lost, err := strconv.Atoi(playerMap["lost"])
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to convert lost to int")
+	if playerMap["lost"] != "" {
+		p.Lost, err = strconv.Atoi(playerMap["lost"])
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to convert lost to int")
+		}
 	}
-	p.Lost = lost
 
 	return p, nil
 }
