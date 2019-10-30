@@ -55,7 +55,11 @@ func main() {
 	})
 
 	if *flush {
-		defer logrus.Errorln(redisClient.FlushAll().Err())
+		logrus.Infoln("flushind database")
+		defer func() {
+			logrus.Errorln(redisClient.FlushAll().Err())
+			logrus.Errorln(redisClient.FlushDB().Err())
+		}()
 	}
 
 	// start game
