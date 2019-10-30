@@ -1,6 +1,9 @@
 package main
 
-import ()
+import (
+	"github.com/Sirupsen/logrus"
+	"time"
+)
 
 func (p *player) ReadChannels() {
 	// subscribe to channels
@@ -12,17 +15,28 @@ func (p *player) ReadChannels() {
 	for {
 		select {
 		case <-p.ctx.Done():
-			logError(p.LeaveGame())
 			return
 		case msg := <-free.Channel():
 			broadMessageType, payload := fromBroadCast(msg.Payload)
 			switch broadMessageType {
 			case messagePlayerJoin:
-				// send the new player to client
-				p.WriteJSON(&message{
-					Type:    messagePlayerJoin,
-					Payload: p.game.NewPlayer(),
-				})
+				timer := time.NewTimer(time.Second)
+				// backoff
+				for i := 0; i < 5; i++ {
+					newPlayer := p.game.GetPlayer(payload)
+					if newPlayer == nil {
+						<-timer.C
+						continue
+					}
+					logrus.Infoln("new player joined: ", newPlayer.Name)
+					p.WriteJSON(&message{
+						Type:    messagePlayerJoin,
+						Payload: newPlayer,
+					})
+					timer.Stop()
+					break
+				}
+
 			case messagePlayerLeft:
 				// send the id of the player to client
 				p.WriteJSON(&message{

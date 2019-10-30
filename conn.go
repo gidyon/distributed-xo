@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/gorilla/websocket"
 	"time"
 )
 
@@ -32,18 +31,9 @@ func (p *player) ReadConn() {
 	)
 
 	for {
-		if p.cancelled() {
-			return
-		}
-
 		err = p.conn.ReadJSON(msg)
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(
-				err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure,
-			) {
-				logError(err)
-			}
-			logError(err)
+			p.cancel()
 			break
 		}
 
@@ -99,7 +89,7 @@ func (p *player) HandleRequest(msg *message) {
 			break
 		}
 		// time player request for 10 seconds for it to expire
-		// go p.TimeOperation(nil, p.SendBusyMessage)
+		go p.TimeOperation(nil, p.SendBusyMessage)
 	case messagePlayerRejectGame:
 		// Example payload: REJECTGAME playerID-wdjbdu938
 		channelID, ok := msg.Payload.(string)
