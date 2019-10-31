@@ -18,27 +18,28 @@ type playerInfo struct {
 	Lost  int
 }
 
+type playerEventB struct {
+	player *playerInfo
+	event  string
+}
+
 type player struct {
-	ctx         context.Context
-	mu          *sync.Mutex // guards conn
-	conn        *websocket.Conn
-	game        *game
-	waitingChan chan struct{}
-	redisClient *redis.Client
-	opponent    *playerInfo
-	opponentID  string
-	info        *playerInfo
+	ctx            context.Context
+	cancel         func()
+	mu             *sync.Mutex // guards conn
+	conn           *websocket.Conn
+	game           *game
+	playersChannel chan *playerEventB
+	waitingChan    chan struct{}
+	redisClient    *redis.Client
+	opponent       *playerInfo
+	opponentID     string
+	info           *playerInfo
 }
 
 func (p *player) JoinGame() error {
-	// add player to distributed cache
-	err := saveInCache(p.info, p.redisClient)
-	if err != nil {
-		return errors.Wrap(err, "failed to save player in cache")
-	}
-
 	// add player id to set
-	err = p.redisClient.SAdd(playersSet, p.info.ID).Err()
+	err := p.redisClient.SAdd(playersSet, p.info.ID).Err()
 	if err != nil {
 		return errors.Wrap(err, "failed to add player id to set")
 	}
@@ -52,8 +53,8 @@ func (p *player) JoinGame() error {
 		return errors.Wrap(err, "failed to add player id to sorted set")
 	}
 
-	// notify free players using free players channel
-	err = p.PublishJoinFreeChannel()
+	// notify servers and other players
+	err = p.PublishPlayerJoined()
 	if err != nil {
 		return errors.Wrap(err, "failed to publish join to players channel")
 	}
@@ -62,20 +63,19 @@ func (p *player) JoinGame() error {
 }
 
 func (p *player) LeaveGame() error {
-	// delete player from cache
-	err := p.redisClient.Del(p.info.ID).Err()
-	if err != nil {
-		return errors.Wrap(err, "failed to delete player from cache")
-	}
-
 	// remove from available players set
-	err = p.redisClient.ZRem(playersZSet, p.info.ID).Err()
+	err := p.redisClient.ZRem(playersZSet, p.info.ID).Err()
 	if err != nil {
 		return errors.Wrap(err, "failed to remove player from set")
 	}
 
+	// Exit from game if you were playing
+	if p.info.State != playerStateFree {
+		p.ExitGameAndPublish()
+	}
+
 	// notify all free players that you are leaving
-	err = p.PublishLeftFreeChannel()
+	err = p.PublishPlayerLeave()
 	if err != nil {
 		return errors.Wrap(err, "failed to publish leave to free players channel")
 	}
@@ -179,7 +179,7 @@ func (p *player) PublishGameExit() error {
 	)
 }
 
-func (p *player) PublishJoinFreeChannel() error {
+func (p *player) PublishPlayerJoined() error {
 	// Example payload: LEFT:::myid
 	return errors.Wrap(
 		p.PublishMessage(playersChannel, playerJoin(p.info.ID)),
@@ -187,7 +187,7 @@ func (p *player) PublishJoinFreeChannel() error {
 	)
 }
 
-func (p *player) PublishLeftFreeChannel() error {
+func (p *player) PublishPlayerLeave() error {
 	// Example payload: LEFT:::myid
 	return errors.Wrap(
 		p.PublishMessage(playersChannel, playerLeft(p.info.ID)),
@@ -216,29 +216,14 @@ func (p *player) JoinFreePlayers() error {
 
 func (p *player) Reset() {
 	p.CloseWaitingChan()
-	// p.opponent = nil
-	// p.opponentID = ""
+	p.opponent = nil
+	p.opponentID = ""
 	p.info.State = playerStateFree
 }
 
 func (p *player) StartOver() {
 	p.Reset()
-	p.WriteError(p.PublishJoinFreeChannel())
-}
-
-func (p *player) RequestExpired() bool {
-	select {
-	case <-p.waitingChan:
-		return true
-	default:
-		return false
-	}
-}
-
-func (p *player) StopWaiting() {
-	if !p.RequestExpired() {
-		close(p.waitingChan)
-	}
+	p.WriteError(p.PublishPlayerJoined())
 }
 
 func (p *player) TimeOperation(successFn, timedOutFn func()) {
@@ -269,14 +254,14 @@ func (p *player) SendBusyMessage() {
 	// send busy message to client
 	p.WriteJSON(&message{
 		Type:    messagePlayerBusy,
-		Payload: p.opponent.Name,
+		Payload: "Opponent",
 	})
 }
 
 func (p *player) WriteJSON(msg *message) error {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	err := p.conn.WriteJSON(msg)
-	p.mu.Unlock()
 	logError(err)
 	return err
 }
@@ -303,7 +288,7 @@ func (p *player) WriteErrorString(errMsg string) error {
 
 func (p *player) StartGame() {
 	p.CloseWaitingChan()
-	err := p.WriteErrors(p.ExitFreePlayers(), p.PublishLeftFreeChannel())
+	err := p.WriteErrors(p.ExitFreePlayers(), p.PublishPlayerLeave())
 	if err != nil {
 		return
 	}
@@ -322,13 +307,12 @@ func (p *player) StartGame() {
 func (p *player) ExitGameAndPublish() {
 	defer p.Reset()
 
-	// exit game to notify other player
-	p.WriteError(p.PublishGameExit())
+	p.CloseWaitingChan()
 
-	logInfo("my name is %s", p.info.Name)
+	// exit game to notify other player
 	// join free players
 	// publish join
-	err := p.WriteErrors(p.JoinFreePlayers(), p.PublishJoinFreeChannel())
+	err := p.WriteErrors(p.PublishGameExit(), p.JoinFreePlayers(), p.PublishPlayerJoined())
 	if err != nil {
 		return
 	}
@@ -337,10 +321,9 @@ func (p *player) ExitGameAndPublish() {
 func (p *player) ExitGame() {
 	defer p.Reset()
 
-	logInfo("my name is %s", p.info.Name)
 	// join free players
 	// publish join
-	err := p.WriteErrors(p.JoinFreePlayers(), p.PublishJoinFreeChannel())
+	err := p.WriteErrors(p.JoinFreePlayers(), p.PublishPlayerJoined())
 	if err != nil {
 		return
 	}

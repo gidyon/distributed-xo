@@ -63,7 +63,6 @@ func (g *game) GetPlayer(playerID string) *playerInfo {
 
 func (g *game) FreePlayers() map[string]*playerInfo {
 	<-g.waitChan
-	logrus.Infoln("free players: ", len(g.freePlayers))
 	return g.freePlayers
 }
 
@@ -74,14 +73,13 @@ func (g *game) run() {
 		broadCastType, payload := fromBroadCast(msg.Payload)
 		switch broadCastType {
 		case messagePlayerJoin:
-			logrus.Infoln("new player id: ", payload)
 			g.waitChan = make(chan struct{})
 			p, err := getPlayerFromRedis(g.redisClient, payload)
 			if err != nil {
 				logrus.Errorln(err)
 				break
 			}
-			logrus.Infoln("new player name: ", p.Name)
+			// _, ok := g.freePlayers[p.ID]
 			g.newPlayer = p
 			g.playersNum++
 			g.freePlayersNum++
