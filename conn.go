@@ -5,26 +5,7 @@ import (
 	"time"
 )
 
-const (
-	// Time allowed to write a message to the peer.
-	writeWait = 10 * time.Second
-	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
-	// Send pings to peer with this period. Must be less than pongWait.
-	pingPeriod = (pongWait * 9) / 10
-	// Maximum message size allowed from peer.
-	maxMessageSize = 512
-)
-
 func (p *player) ReadConn() {
-	// add some options
-	// p.conn.SetReadLimit(maxMessageSize)
-	// p.conn.SetReadDeadline(time.Now().Add(pongWait))
-	// p.conn.SetPongHandler(func(string) error {
-	// 	p.conn.SetReadDeadline(time.Now().Add(pongWait))
-	// 	return nil
-	// })
-
 	var (
 		msg = new(message)
 		err error
@@ -138,6 +119,7 @@ func (p *player) HandleRequest(msg *message) {
 		if err != nil {
 			break
 		}
+		p.WriteError(p.redisClient.HIncrBy(p.info.ID, "draw", 1).Err())
 		p.info.State = playerStateGameOver
 		p.info.Draw++
 	case messageGameWon:
@@ -155,9 +137,17 @@ func (p *player) HandleRequest(msg *message) {
 		}
 		if playerID == p.info.ID {
 			// i won
+			err = p.WriteError(p.redisClient.HIncrBy(p.info.ID, "won", 1).Err())
+			if err != nil {
+				break
+			}
 			p.info.Won++
 		} else {
 			// i lost
+			err = p.WriteError(p.redisClient.HIncrBy(p.info.ID, "lost", 1).Err())
+			if err != nil {
+				break
+			}
 			p.info.Lost++
 		}
 	case messagePlayerRestartGame: // STEP 8

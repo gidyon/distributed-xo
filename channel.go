@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/Sirupsen/logrus"
 	"time"
 )
 
@@ -28,7 +27,6 @@ func (p *player) ReadChannels() {
 						<-timer.C
 						continue
 					}
-					logrus.Infoln("new player joined: ", newPlayer.Name)
 					p.WriteJSON(&message{
 						Type:    messagePlayerJoin,
 						Payload: newPlayer,
@@ -100,19 +98,31 @@ func (p *player) ReadChannels() {
 					Payload: payload,
 				})
 			case messageGameDraw:
-				p.info.State = playerStateGameOver
+				err := p.WriteError(p.redisClient.HIncrBy(p.info.ID, "draw", 1).Err())
+				if err != nil {
+					break
+				}
 				p.info.Draw++
+				p.info.State = playerStateGameOver
 				p.WriteJSON(&message{
 					Type:    messageGameDraw,
 					Payload: "Draw!",
 				})
 			case messageGameWon:
-				p.info.State = playerStateGameOver
 				if payload == p.info.ID {
+					err := p.WriteError(p.redisClient.HIncrBy(p.info.ID, "won", 1).Err())
+					if err != nil {
+						break
+					}
 					p.info.Won++
 				} else {
+					err := p.WriteError(p.redisClient.HIncrBy(p.info.ID, "lost", 1).Err())
+					if err != nil {
+						break
+					}
 					p.info.Lost++
 				}
+				p.info.State = playerStateGameOver
 				p.WriteJSON(&message{
 					Type:    messageGameWon,
 					Payload: payload,
