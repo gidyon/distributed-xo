@@ -34,12 +34,15 @@ func (g *game) PlayerJoin(w http.ResponseWriter, r *http.Request) {
 	playerID := "player#" + host
 
 	// check if user has already joined the game and is in set
-	exist, err := g.redisClient.SIsMember(playersSet, playerID).Result()
+	i, err := g.redisClient.Exists(playerID).Result()
 	if err != nil {
 		logError(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	exist := i == 1
+
+	playerName := randomdata.SillyName()
 
 	// player exist in set
 	if exist {
@@ -53,6 +56,15 @@ func (g *game) PlayerJoin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		// set name
+		err = p.redisClient.HSet(playerID, "name", playerName).Err()
+		if err != nil {
+			logError(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		// get player from set
 		p.info, err = getPlayerFromRedis(g.redisClient, playerID)
 		if err != nil {
@@ -64,7 +76,7 @@ func (g *game) PlayerJoin(w http.ResponseWriter, r *http.Request) {
 
 	if !exist {
 		p.info = &playerInfo{
-			Name:  randomdata.SillyName(),
+			Name:  playerName,
 			ID:    playerID,
 			State: playerStateFree,
 			Won:   0,
@@ -78,10 +90,9 @@ func (g *game) PlayerJoin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
-		// expire player data after 12 hours
-		p.redisClient.Expire(p.info.ID, 12*time.Hour)
 	}
+
+	p.info.Name = playerName
 
 	// upgrade connection to websocket
 	p.conn, err = upgrader.Upgrade(w, r, nil)
@@ -116,5 +127,5 @@ func (g *game) PlayerJoin(w http.ResponseWriter, r *http.Request) {
 	go p.ReadConn()
 	go p.ReadChannels()
 	<-p.ctx.Done()
-	p.LeaveGame()
+	logError(p.LeaveGame())
 }

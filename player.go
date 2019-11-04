@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/Sirupsen/logrus"
 	"github.com/go-redis/redis"
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
@@ -64,9 +65,15 @@ func (p *player) JoinGame() error {
 
 func (p *player) LeaveGame() error {
 	// remove from available players set
-	err := p.redisClient.ZRem(playersZSet, p.info.ID).Err()
+	err := p.redisClient.SRem(playersSet, p.info.ID).Err()
 	if err != nil {
 		return errors.Wrap(err, "failed to remove player from set")
+	}
+
+	// remove from available players sorted set
+	err = p.redisClient.ZRem(playersZSet, p.info.ID).Err()
+	if err != nil {
+		return errors.Wrap(err, "failed to remove player from sorted set")
 	}
 
 	// Exit from game if you were playing
@@ -217,20 +224,13 @@ func (p *player) JoinFreePlayers() error {
 func (p *player) Reset() {
 	p.CloseWaitingChan()
 	p.opponent = nil
-	p.opponentID = ""
 	p.info.State = playerStateFree
-}
-
-func (p *player) StartOver() {
-	p.Reset()
-	p.WriteError(p.PublishPlayerJoined())
 }
 
 func (p *player) TimeOperation(successFn, timedOutFn func()) {
 	// close waiting chan if not closed
-	defer p.CloseWaitingChan()
+	defer p.InitWaitingChan()
 
-	p.waitingChan = make(chan struct{})
 	select {
 	case <-p.waitingChan: // waiting was over
 		if successFn != nil {
@@ -304,12 +304,24 @@ func (p *player) StartGame() {
 	p.info.State = playerStatePlaying
 }
 
+func (p *player) RestartGame() {
+	// notify the client that game can start
+	err := p.WriteJSON(&message{
+		Type:    messagePlayerStartGame,
+		Payload: p.opponent,
+	})
+	if err != nil {
+		return
+	}
+	// update your state to playing
+	p.info.State = playerStatePlaying
+}
+
 func (p *player) ExitGameAndPublish() {
 	defer p.Reset()
+	logrus.Infoln("i have exited: ", p.info.Name)
 
-	p.CloseWaitingChan()
-
-	// exit game to notify other player
+	p.info.State = playerStateFree
 	// join free players
 	// publish join
 	err := p.WriteErrors(p.PublishGameExit(), p.JoinFreePlayers(), p.PublishPlayerJoined())
@@ -320,7 +332,9 @@ func (p *player) ExitGameAndPublish() {
 
 func (p *player) ExitGame() {
 	defer p.Reset()
+	logrus.Infoln("i have been exited: ", p.info.Name)
 
+	p.info.State = playerStateFree
 	// join free players
 	// publish join
 	err := p.WriteErrors(p.JoinFreePlayers(), p.PublishPlayerJoined())
@@ -330,7 +344,7 @@ func (p *player) ExitGame() {
 	// notify client
 	p.WriteJSON(&message{
 		Type:    messagePlayerExitGame,
-		Payload: "",
+		Payload: "Opponent",
 	})
 }
 
@@ -340,4 +354,8 @@ func (p *player) CloseWaitingChan() {
 	default:
 		close(p.waitingChan)
 	}
+}
+
+func (p *player) InitWaitingChan() {
+	p.waitingChan = make(chan struct{}, 0)
 }
