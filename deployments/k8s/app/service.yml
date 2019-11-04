@@ -9,9 +9,11 @@ spec:
   type: LoadBalancer
   ports:
   - port: 443
+    name: https
     targetPort: 443
     protocol: TCP
   - port: 80
+    name: http
     targetPort: 80
     protocol: TCP
   selector:

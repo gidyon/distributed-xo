@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: xogame
-        image: gidyon/xo:v1.6
+        image: gidyon/xo:v2.1
         env:
         - name: REDIS_HOST
           value: "redis"
