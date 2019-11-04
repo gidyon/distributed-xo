@@ -53,8 +53,9 @@ func main() {
 	}
 	// static file server
 	staticHandler, err := static.NewHandler(&static.ServerOptions{
-		RootDir: staticsDir,
-		Index:   "index.html",
+		RootDir:       staticsDir,
+		Index:         "index.html",
+		FallBackIndex: true,
 	})
 	if err != nil {
 		logrus.Fatalln(err)
@@ -65,15 +66,15 @@ func main() {
 		Addr:    ":80",
 	}
 
-	server2 := http.Server{
-		Handler: handler(g, staticHandler),
-		Addr:    ":443",
-	}
+	// server2 := http.Server{
+	// 	Handler: handler(g, staticHandler),
+	// 	Addr:    ":443",
+	// }
+
+	// go logrus.Fatalln(server2.ListenAndServeTLS(*certFile, *keyFile))
 
 	logrus.Infoln("server started on port 80(http) and 443(https)")
-
-	go server1.ListenAndServe()
-	server2.ListenAndServeTLS(*certFile, *keyFile)
+	logrus.Fatalln(server1.ListenAndServe())
 }
 
 func handler(g *game, staticHandler http.Handler) http.Handler {
