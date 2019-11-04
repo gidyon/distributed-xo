@@ -76,6 +76,7 @@ func (p *player) LeaveGame() error {
 		return errors.Wrap(err, "failed to remove player from sorted set")
 	}
 
+	logrus.Infoln("player state: ", p.info.State)
 	// Exit from game if you were playing
 	if p.info.State != playerStateFree {
 		p.ExitGameAndPublish()
@@ -233,6 +234,9 @@ func (p *player) TimeOperation(successFn, timedOutFn func()) {
 
 	select {
 	case <-p.waitingChan: // waiting was over
+		if p.info.State == playerStateFree {
+			break
+		}
 		if successFn != nil {
 			successFn()
 		}
