@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"time"
 )
 
 func (p *player) ReadConn() {
@@ -14,6 +13,7 @@ func (p *player) ReadConn() {
 	for {
 		err = p.conn.ReadJSON(msg)
 		if err != nil {
+			// cancel game
 			p.cancel()
 			break
 		}
@@ -31,10 +31,6 @@ func (p *player) HandleRequest(msg *message) {
 			p.ExitGameAndPublish()
 		}
 	}()
-
-	// one request at a time from one player
-	// p.mu.Lock()
-	// defer p.mu.Unlock()
 
 	var err error
 
@@ -55,6 +51,8 @@ func (p *player) HandleRequest(msg *message) {
 			})
 			break
 		}
+		// will wait
+		p.InitWaitingChan()
 		// update your state
 		p.info.State = playerStateRequesting
 		// get the opponent
@@ -98,6 +96,9 @@ func (p *player) HandleRequest(msg *message) {
 		p.StartGame()
 	case messagePlayerMove: // STEP 5
 		// Example payload: PLAYERMOVE box-33
+		if p.info.State != playerStatePlaying {
+			break
+		}
 		moveID, ok := msg.Payload.(string)
 		if !ok {
 			errMsg := fmt.Sprintf("failed to convert %s payload to string", messagePlayerMove)
@@ -108,6 +109,7 @@ func (p *player) HandleRequest(msg *message) {
 		p.WriteError(p.PublishMove(moveID))
 	case messageGameDraw: // STEP 7
 		// Example payload: DRAW
+		p.InitWaitingChan()
 		_, ok := msg.Payload.(string)
 		if !ok {
 			errMsg := fmt.Sprintf("failed to convert %s payload to string", messageGameDraw)
@@ -124,6 +126,7 @@ func (p *player) HandleRequest(msg *message) {
 		p.info.Draw++
 	case messageGameWon:
 		// Example payload: WON winnerID
+		p.InitWaitingChan()
 		playerID, ok := msg.Payload.(string)
 		if !ok {
 			errMsg := fmt.Sprintf("failed to convert %s payload to string", messageGameWon)
@@ -150,28 +153,17 @@ func (p *player) HandleRequest(msg *message) {
 			}
 			p.info.Lost++
 		}
+		p.info.State = playerStateGameOver
 	case messagePlayerRestartGame: // STEP 8
 		// Example payload: RESTARTGAME
 		err = p.WriteError(p.PublishGameRestart())
 		if err != nil {
 			break
 		}
-		// time client for 10 seconds
-		select {
-		case <-time.After(10 * time.Second):
-			p.ExitGameAndPublish()
-		case <-p.waitingChan:
-			// notify the client that game can start
-			err = p.WriteJSON(&message{
-				Type:    messagePlayerStartGame,
-				Payload: p.opponent,
-			})
-			if err != nil {
-				break
-			}
-			// update your state to playing
-			p.info.State = playerStatePlaying
-		}
+		// update state of player
+		p.info.State = playerStateGameOver
+		// time player for 10 sec
+		go p.TimeOperation(p.RestartGame, p.ExitGameAndPublish)
 	case messagePlayerExitGame:
 		p.ExitGameAndPublish()
 	}

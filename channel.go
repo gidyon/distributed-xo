@@ -58,6 +58,7 @@ func (p *player) ReadChannels() {
 					p.WriteError(err)
 					break
 				}
+				p.InitWaitingChan()
 				p.opponent = opponent
 				p.info.State = playerStateRequesting
 				// notify the client that someone want to play; send along the opponent details
@@ -70,7 +71,7 @@ func (p *player) ReadChannels() {
 				// tell your client other player is busy
 				p.WriteJSON(&message{
 					Type:    messagePlayerBusy,
-					Payload: p.opponent.Name,
+					Payload: "Opponent",
 				})
 				p.Reset()
 			case messagePlayerRejectGame:
@@ -98,6 +99,7 @@ func (p *player) ReadChannels() {
 					Payload: payload,
 				})
 			case messageGameDraw:
+				p.InitWaitingChan()
 				err := p.WriteError(p.redisClient.HIncrBy(p.info.ID, "draw", 1).Err())
 				if err != nil {
 					break
@@ -109,6 +111,7 @@ func (p *player) ReadChannels() {
 					Payload: "Draw!",
 				})
 			case messageGameWon:
+				p.InitWaitingChan()
 				if payload == p.info.ID {
 					err := p.WriteError(p.redisClient.HIncrBy(p.info.ID, "won", 1).Err())
 					if err != nil {
